@@ -17,7 +17,7 @@ import { env } from "../config/env.js";
 function getDefaultMembers(count = 3) {
   const providers: any[] = [];
   if (env.OPENAI_API_KEY) {
-    providers.push({ type: "openai-compat", apiKey: env.OPENAI_API_KEY, model: "gpt-4o-mini", name: "OpenAI" });
+    providers.push({ type: "openai-compat", apiKey: env.OPENAI_API_KEY, model: "gpt-4o", name: "OpenAI" });
   }
   if (env.GOOGLE_API_KEY) {
     providers.push({ type: "google", apiKey: env.GOOGLE_API_KEY, model: "gemini-2.0-flash", name: "Gemini" });
@@ -35,10 +35,37 @@ function getDefaultMembers(count = 3) {
 }
 
 function getDefaultMaster() {
-  if (env.OPENAI_API_KEY) return { type: "openai-compat" as const, apiKey: env.OPENAI_API_KEY, model: "gpt-4o-mini", name: "Master" };
+  if (env.OPENAI_API_KEY) return { type: "openai-compat" as const, apiKey: env.OPENAI_API_KEY, model: "gpt-4o", name: "Master" };
   if (env.GOOGLE_API_KEY) return { type: "google" as const, apiKey: env.GOOGLE_API_KEY, model: "gemini-2.0-flash", name: "Master" };
   if (env.ANTHROPIC_API_KEY) return { type: "anthropic" as const, apiKey: env.ANTHROPIC_API_KEY, model: "claude-sonnet-4-20250514", name: "Master" };
   throw new AppError(400, "No AI provider API keys configured.");
+}
+
+/** Resolve API key for a member that has no key set, using baseUrl and model name heuristics */
+function resolveApiKey(m: any): string {
+  const base = (m.baseUrl || "").toLowerCase();
+  const model = (m.model || "").toLowerCase();
+
+  // 1. Check baseUrl first (most reliable signal)
+  if (base.includes("siliconflow"))   return env.XIAOMI_MIMO_API_KEY || env.OPENAI_API_KEY || "";
+  if (base.includes("openrouter"))    return env.OPENROUTER_API_KEY || env.OPENAI_API_KEY || "";
+  if (base.includes("groq.com"))      return env.GROQ_API_KEY || env.OPENAI_API_KEY || "";
+  if (base.includes("mistral.ai"))    return env.MISTRAL_API_KEY || env.OPENAI_API_KEY || "";
+  if (base.includes("cerebras.ai"))   return env.CEREBRAS_API_KEY || env.OPENAI_API_KEY || "";
+  if (base.includes("nvidia.com"))    return env.NVIDIA_API_KEY || env.OPENAI_API_KEY || "";
+
+  // 2. Check model name patterns
+  if (model.includes("/"))            return env.OPENROUTER_API_KEY || env.OPENAI_API_KEY || "";  // OpenRouter uses org/model format
+  if (model.includes("xiaomi") || model.includes("mimo")) return env.XIAOMI_MIMO_API_KEY || env.OPENAI_API_KEY || "";
+  if (model.includes("mistral"))      return env.MISTRAL_API_KEY || env.OPENAI_API_KEY || "";
+  if (model.includes("qwen-3-235b") || model.includes("gpt-oss") || model.includes("llama3.1-8b"))  return env.CEREBRAS_API_KEY || env.OPENAI_API_KEY || "";
+
+  // 3. Check provider type
+  if (m.type === "google")            return env.GOOGLE_API_KEY || "";
+  if (m.type === "anthropic")         return env.ANTHROPIC_API_KEY || "";
+
+  // 4. Default to OpenAI
+  return env.OPENAI_API_KEY || "";
 }
 
 const router = Router();
@@ -53,8 +80,19 @@ router.post("/", optionalAuth, checkQuota, validate(askSchema), async (req: Auth
   const startTime = Date.now();
   try {
     const { question, conversationId, summon, maxTokens, rounds = 1, context } = req.body;
-    const members = req.body.members || getDefaultMembers();
-    const master = req.body.master || getDefaultMaster();
+    // Map empty API keys to server-side fallbacks
+    const resolvedMembers = (req.body.members || getDefaultMembers()).map((m: any) => {
+      if (!m.apiKey) m.apiKey = resolveApiKey(m);
+      return m;
+    });
+    
+    // Process master empty key similarly
+    const inputMaster = req.body.master || getDefaultMaster();
+    if (!inputMaster.apiKey) {
+      inputMaster.apiKey = env.OPENAI_API_KEY;
+    }
+    const master = inputMaster;
+
     const userId = req.userId;
 
     let effectiveConversationId = conversationId;
@@ -71,7 +109,7 @@ router.post("/", optionalAuth, checkQuota, validate(askSchema), async (req: Auth
       messages = await getRecentHistory(effectiveConversationId);
     }
 
-    const councilMembers = await prepareCouncilMembers(members, summon, userId);
+    const councilMembers = await prepareCouncilMembers(resolvedMembers, summon, userId);
 
     const questionWithContext = context ? `GROUND TRUTH CONTEXT:\n${context}\n\n---\n\nQUESTION: ${question}` : question;
     const currentMessages = [...messages, { role: "user" as const, content: questionWithContext }];
@@ -159,8 +197,18 @@ router.post("/stream", optionalAuth, checkQuota, validate(askSchema), async (req
 
   try {
     const { question, conversationId, summon, maxTokens, rounds = 1, context } = req.body;
-    const members = req.body.members || getDefaultMembers();
-    const master = req.body.master || getDefaultMaster();
+    // Map empty API keys to server-side fallbacks
+    const resolvedMembers = (req.body.members || getDefaultMembers()).map((m: any) => {
+      if (!m.apiKey) m.apiKey = resolveApiKey(m);
+      return m;
+    });
+    
+    const inputMaster = req.body.master || getDefaultMaster();
+    if (!inputMaster.apiKey) {
+      inputMaster.apiKey = env.OPENAI_API_KEY;
+    }
+    const master = inputMaster;
+
     const userId = req.userId;
 
     let effectiveConversationId = conversationId;
@@ -187,7 +235,7 @@ router.post("/stream", optionalAuth, checkQuota, validate(askSchema), async (req
       effectiveConversationId = newConvo.id;
     }
 
-    const councilMembers = await prepareCouncilMembers(members, summon, userId);
+    const councilMembers = await prepareCouncilMembers(resolvedMembers, summon, userId);
     const questionWithContext = context ? `GROUND TRUTH CONTEXT:\n${context}\n\n---\n\nQUESTION: ${question}` : question;
     const currentMessages = [...messages, { role: "user" as const, content: questionWithContext }];
 

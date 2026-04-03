@@ -46,18 +46,38 @@ interface ProviderRegistryEntry {
  * Model-prefix registry: maps a substring of the model name to a provider config.
  * Order matters — first match wins. More specific prefixes should come first.
  */
-const PROVIDER_REGISTRY: Record<string, ProviderRegistryEntry> = {
-  // NVIDIA-hosted OpenAI-compatible models
-  "kimi":     { baseUrl: "https://integrate.api.nvidia.com/v1", type: "openai-compat", defaultMaxTokens: 2048 },
-  "glm":      { baseUrl: "https://integrate.api.nvidia.com/v1", type: "openai-compat", defaultMaxTokens: 2048 },
-  "minimax":  { baseUrl: "https://integrate.api.nvidia.com/v1", type: "openai-compat", defaultMaxTokens: 2048 },
-  "llama":    { baseUrl: "https://integrate.api.nvidia.com/v1", type: "openai-compat", defaultMaxTokens: 4096 },
-  "nemotron": { baseUrl: "https://integrate.api.nvidia.com/v1", type: "openai-compat", defaultMaxTokens: 4096 },
-  "qwen":     { baseUrl: "https://integrate.api.nvidia.com/v1", type: "openai-compat", defaultMaxTokens: 4096 },
-  // Native API providers (no custom base URL needed)
-  "gemini":   { type: "google",    defaultMaxTokens: 4096 },
-  "claude":   { type: "anthropic", defaultMaxTokens: 4096 },
-};
+/**
+ * Model-prefix registry: maps a substring of the model name to a provider config.
+ * Order matters — first match wins. More specific prefixes MUST come before
+ * broader ones.
+ *
+ * IMPORTANT: This registry is only used as a FALLBACK when the provider object
+ * does not already include an explicit baseUrl. If the frontend (or API caller)
+ * specifies a baseUrl, it is always respected.
+ */
+const PROVIDER_REGISTRY: [string, ProviderRegistryEntry][] = [
+  // ── Specific model IDs first (avoid substring collisions) ──────────
+  // Groq-hosted models
+  ["llama-3.1-8b-instant",    { baseUrl: "https://api.groq.com/openai/v1",   type: "openai-compat", defaultMaxTokens: 4096 }],
+
+  // OpenRouter-hosted models (contain "/" in model name)
+  ["nvidia/",                 { baseUrl: "https://openrouter.ai/api/v1",     type: "openai-compat", defaultMaxTokens: 4096 }],
+  ["google/",                 { baseUrl: "https://openrouter.ai/api/v1",     type: "openai-compat", defaultMaxTokens: 4096 }],
+  ["meta/",                   { baseUrl: "https://openrouter.ai/api/v1",     type: "openai-compat", defaultMaxTokens: 4096 }],
+
+  // ── Mistral ────────────────────────────────────────────────────────
+  ["mistral",                 { baseUrl: "https://api.mistral.ai/v1",        type: "openai-compat", defaultMaxTokens: 2048 }],
+
+  // ── NVIDIA-hosted models (generic; matched last so specifics win) ──
+  ["kimi",                    { baseUrl: "https://integrate.api.nvidia.com/v1", type: "openai-compat", defaultMaxTokens: 2048 }],
+  ["glm",                     { baseUrl: "https://integrate.api.nvidia.com/v1", type: "openai-compat", defaultMaxTokens: 2048 }],
+  ["minimax",                 { baseUrl: "https://integrate.api.nvidia.com/v1", type: "openai-compat", defaultMaxTokens: 2048 }],
+  ["nemotron",                { baseUrl: "https://integrate.api.nvidia.com/v1", type: "openai-compat", defaultMaxTokens: 4096 }],
+
+  // ── Native API providers (no custom base URL needed) ───────────────
+  ["gemini",                  { type: "google",    defaultMaxTokens: 4096 }],
+  ["claude",                  { type: "anthropic", defaultMaxTokens: 4096 }],
+];
 
 interface ResolvedProvider {
   type: "openai-compat" | "anthropic" | "google";
@@ -71,10 +91,10 @@ function resolveProvider(provider: Provider): ResolvedProvider {
   let maxTokens = provider.maxTokens ?? 1024;
 
   const model = provider.model?.toLowerCase() || "";
-  const match = Object.keys(PROVIDER_REGISTRY).find((p) => model.includes(p));
+  const match = PROVIDER_REGISTRY.find(([prefix]) => model.includes(prefix));
 
   if (match) {
-    const entry = PROVIDER_REGISTRY[match];
+    const entry = match[1];
     if (!resolvedBaseUrl && entry.baseUrl) resolvedBaseUrl = entry.baseUrl;
     if (!provider.type || provider.type === "openai-compat") type = entry.type;
     if (!provider.maxTokens) maxTokens = entry.defaultMaxTokens;

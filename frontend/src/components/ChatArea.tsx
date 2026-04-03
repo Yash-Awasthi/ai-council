@@ -85,6 +85,7 @@ export function ChatArea({
   const [showExport, setShowExport] = useState(false);
   const [showMemberConfig, setShowMemberConfig] = useState(false);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+  const [visibleKeyIds, setVisibleKeyIds] = useState<Record<string, boolean>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -158,7 +159,11 @@ export function ChatArea({
     e.target.style.height = Math.min(e.target.scrollHeight, 130) + "px";
   };
 
-  const getMemberColor = (index: number) => MEMBER_COLORS[index % MEMBER_COLORS.length];
+  const getMemberColor = (name: string) => {
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    return MEMBER_COLORS[Math.abs(hash) % MEMBER_COLORS.length];
+  };
 
   const mdComponents = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -297,7 +302,7 @@ export function ChatArea({
             {(msg.opinions?.length ?? 0) > 0 && (
               <div className="space-y-5">
                 {msg.opinions?.map((op, i) => {
-                  const color = getMemberColor(i);
+                  const color = getMemberColor(op.name);
                   return (
                     <div
                       key={i}
@@ -444,26 +449,41 @@ export function ChatArea({
 
               <div className="flex justify-between items-center mb-2">
                 <span className="text-[10px] text-text-dim uppercase tracking-widest font-bold">Total Members: {members.length}</span>
-                <button
-                  onClick={() => {
-                    const newMember = {
-                      id: Math.random().toString(36).substring(7),
-                      name: "New Member",
-                      type: "openai-compat" as const,
-                      apiKey: "",
-                      model: "gpt-4o-mini",
-                      active: true,
-                      role: "Default",
-                      tone: "Concise",
-                      customBehaviour: "Respond helpfully."
-                    };
-                    onUpdateMembers([...members, newMember]);
-                  }}
-                  className="px-3 py-1 bg-accent/10 hover:bg-accent/20 text-accent text-[9px] font-black uppercase tracking-widest rounded-lg flex items-center gap-1 transition-colors"
-                >
-                  <span className="material-symbols-outlined text-[14px]">add</span>
-                  Add Member
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      if (confirm("Reset member configurations to system defaults?")) {
+                        localStorage.removeItem("council_members");
+                        window.location.reload();
+                      }
+                    }}
+                    className="px-3 py-1 bg-white/5 hover:bg-danger/20 text-text-dim hover:text-danger text-[9px] font-black uppercase tracking-widest rounded-lg flex items-center gap-1 transition-colors"
+                    title="Clear cached setup"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">refresh</span>
+                    Reset Config
+                  </button>
+                  <button
+                    onClick={() => {
+                      const newMember = {
+                        id: Math.random().toString(36).substring(7),
+                        name: "New Member",
+                        type: "openai-compat" as const,
+                        apiKey: "",
+                        model: "gpt-4o",
+                        active: true,
+                        role: "Default",
+                        tone: "Concise",
+                        customBehaviour: "Respond helpfully."
+                      };
+                      onUpdateMembers([...members, newMember]);
+                    }}
+                    className="px-3 py-1 bg-accent/10 hover:bg-accent/20 text-accent text-[9px] font-black uppercase tracking-widest rounded-lg flex items-center gap-1 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">add</span>
+                    Add Member
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[60vh] overflow-y-auto scrollbar-custom pr-2">
@@ -583,17 +603,28 @@ export function ChatArea({
                         {/* API Key */}
                         <div className="space-y-1">
                           <label className="text-[8px] text-text-dim uppercase font-black tracking-widest">API Key</label>
-                          <input
-                            type="password"
-                            value={member.apiKey}
-                            onChange={(e) => {
-                              const newMembers = [...members];
-                              newMembers[idx] = { ...member, apiKey: e.target.value };
-                              onUpdateMembers(newMembers);
-                            }}
-                            className="w-full bg-black/50 border border-white/8 rounded-lg text-[10px] text-text p-1.5 outline-none focus:border-accent/30 font-mono"
-                            placeholder="sk-..."
-                          />
+                          <div className="relative group">
+                            <input
+                              type={visibleKeyIds[member.id] ? "text" : "password"}
+                              value={member.apiKey}
+                              onChange={(e) => {
+                                const newMembers = [...members];
+                                newMembers[idx] = { ...member, apiKey: e.target.value };
+                                onUpdateMembers(newMembers);
+                              }}
+                              className="w-full bg-black/50 border border-white/8 rounded-lg text-[10px] text-text p-1.5 pr-8 outline-none focus:border-accent/30 font-mono transition-colors"
+                              placeholder="sk-..."
+                            />
+                            <button
+                              onClick={() => setVisibleKeyIds(prev => ({ ...prev, [member.id]: !prev[member.id] }))}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 text-text-dim hover:text-accent transition-colors"
+                              title={visibleKeyIds[member.id] ? "Hide Key" : "Show Key"}
+                            >
+                              <span className="material-symbols-outlined text-[14px]">
+                                {visibleKeyIds[member.id] ? "visibility_off" : "visibility"}
+                              </span>
+                            </button>
+                          </div>
                         </div>
 
                         {/* Model & provider row */}

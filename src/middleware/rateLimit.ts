@@ -17,7 +17,11 @@ const commonHandler = (req: Request, res: Response, _next: NextFunction, options
 export const askLimiter = rateLimit({
   windowMs: env.RATE_LIMIT_WINDOW_MS,
   max: env.RATE_LIMIT_MAX,
-  keyGenerator: (req: any) => (req.userId ? `user:${req.userId}` : req.ip),
+  keyGenerator: (req: any) => {
+    if (req.userId) return `user:${req.userId}`;
+    const ip = req.ip || "127.0.0.1";
+    return ip.replace(/^::ffff:/, '');
+  },
   message: { error: "Too many requests, slow down." },
   standardHeaders: true,
   legacyHeaders: false,
@@ -27,6 +31,10 @@ export const askLimiter = rateLimit({
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 20,
+  keyGenerator: (req: any) => {
+    const ip = req.ip || "127.0.0.1";
+    return ip.replace(/^::ffff:/, '');
+  },
   message: { error: "Too many auth attempts, try again later." },
   standardHeaders: true,
   legacyHeaders: false,

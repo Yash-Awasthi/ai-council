@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, Component, type ErrorInfo, type ReactNode } from "react";
+import { AuthProvider, useAuth } from "./context/AuthContext";
+import { useCouncilStream, type SSEEvent } from "./hooks/useCouncilStream";
 import { AuthScreen } from "./components/AuthScreen";
 import { Sidebar, type Conversation } from "./components/Sidebar";
 import { ChatArea, type ChatMessage } from "./components/ChatArea";
@@ -52,15 +54,6 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   }
 }
 
-// SSE event types that the backend council.ts emits
-type SSEEvent =
-  | { type: "member_chunk"; name: string; chunk: string }
-  | { type: "opinion"; name: string; archetype: string; opinion: string }
-  | { type: "verdict"; verdict: string }
-  | { type: "verdict_chunk"; chunk: string }
-  | { type: "done"; verdict: string; latency?: number; cacheHit?: boolean; tokensUsed?: number; conversationId?: string | null }
-  | { type: "error"; message: string };
-
 interface UserMetrics {
   totalRequests: number;
   totalConversations: number;
@@ -87,9 +80,8 @@ export interface CouncilMember {
   customBehaviour: string;
 }
 
-function App() {
-  const [token, setToken] = useState<string | null>(localStorage.getItem("council_token"));
-  const [username, setUsername] = useState<string>(localStorage.getItem("council_user") || "");
+function AppContent() {
+  const { token, user: username, login, logout, fetchWithAuth } = useAuth();
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvoId, setActiveConvoId] = useState<string | null>(null);
@@ -107,6 +99,19 @@ function App() {
     return saved ? parseInt(saved, 10) : 264;
   });
 
+  const activeMsgIdRef = useRef<string | null>(null);
+
+  const { startStream } = useCouncilStream({
+    onEvent: (event) => {
+      if (activeMsgIdRef.current) {
+        updateMessageFromStream.current(activeMsgIdRef.current, event);
+      }
+    },
+    onError: (msg) => {
+      console.error("Stream error in App:", msg);
+    }
+  });
+
   const [members, setMembers] = useState<CouncilMember[]>(() => {
     const saved = localStorage.getItem("council_members");
     if (saved) {
@@ -120,10 +125,9 @@ function App() {
       {
         id: "1",
         name: "The Architect",
-        type: "openai-compat",
-        apiKey: "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",
-        model: "moonshotai/kimi-k2.5",
-        baseUrl: "https://integrate.api.nvidia.com/v1",
+        type: "google" as const,
+        apiKey: "",
+        model: "gemini-2.5-flash",
         active: true,
         role: "Expert",
         tone: "Academic",
@@ -132,10 +136,10 @@ function App() {
       {
         id: "2",
         name: "The Contrarian",
-        type: "openai-compat",
-        apiKey: "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",
-        model: "google/gemini-2.0-flash-exp:free",
-        baseUrl: "https://openrouter.ai/api/v1",
+        type: "openai-compat" as const,
+        apiKey: "",
+        model: "gpt-4o",
+        baseUrl: "https://api.openai.com/v1",
         active: true,
         role: "Devil's Advocate",
         tone: "Blunt",
@@ -144,9 +148,10 @@ function App() {
       {
         id: "3",
         name: "The Pragmatist",
-        type: "google",
-        apiKey: "AIzaSyAKFgXhT2V25HtTnHcXMPb3Z_dCljH5lhY",
-        model: "gemini-2.5-flash",
+        type: "openai-compat" as const,
+        apiKey: "",
+        model: "mistral-small-latest",
+        baseUrl: "https://api.mistral.ai/v1",
         active: true,
         role: "Pragmatist",
         tone: "Concise",
@@ -155,14 +160,14 @@ function App() {
       {
         id: "4",
         name: "The Summarizer",
-        type: "openai-compat",
-        apiKey: "sk-sgwx63u9f654ly3nusxlkdqzzzziezx7f6a4xx8ryogcgnds",
-        model: "xiaomi/MiMo-V2-Flash",
-        baseUrl: "https://api.siliconflow.cn/v1",
+        type: "openai-compat" as const,
+        apiKey: "",
+        model: "qwen-3-235b-a22b-instruct-2507",
+        baseUrl: "https://api.cerebras.ai/v1",
         active: true,
         role: "Critic",
         tone: "Concise",
-        customBehaviour: "You are an Unbiased Summarizer. Provide a completely neutral, objective summary of the debate. Do not invent new arguments."
+        customBehaviour: "You are an Unbiased Summarizer. Provide a completely neutral, objective summary of the debate using your large context window. Do not invent new arguments."
       }
     ];
   });
@@ -175,57 +180,30 @@ function App() {
     localStorage.setItem("council_sidebar_width", sidebarWidth.toString());
   }, [sidebarWidth]);
 
-  const handleLogin = (newToken: string, newUsername: string) => {
-    setToken(newToken);
-    setUsername(newUsername);
-    localStorage.setItem("council_token", newToken);
-    localStorage.setItem("council_user", newUsername);
-  };
-
   const handleLogout = useCallback(async () => {
-    try {
-      await fetch("/api/auth/logout", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` }
-      });
-    } catch (err) {
-      console.error("Logout request failed", err);
-    }
-    setToken(null);
-    setUsername("");
-    localStorage.removeItem("council_token");
-    localStorage.removeItem("council_user");
+    await logout();
     setActiveConvoId(null);
     setMessages([]);
-  }, [token]);
+  }, [logout]);
 
   const checkProfile = useCallback(async () => {
+    if (!token) return;
     try {
-      const res = await fetch("/api/auth/me", {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await fetchWithAuth("/api/auth/me");
       if (!res.ok) {
         if (res.status === 401) handleLogout();
         return;
       }
-      const data = await res.json() as { username: string };
-      setUsername(data.username);
-
-      // Auto-refresh token if it expires in < 24h
+      
+      // Auto-refresh logic utilizing fetchWithAuth
       try {
-        const payload = JSON.parse(atob(token!.split('.')[1])) as { exp: number };
+        const payload = JSON.parse(atob(token.split('.')[1])) as { exp: number };
         const exp = payload.exp * 1000;
-        const now = Date.now();
-        const oneDay = 24 * 60 * 60 * 1000;
-
-        if (exp - now < oneDay) {
-          const refreshRes = await fetch("/api/auth/refresh", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${token}` }
-          });
+        if (exp - Date.now() < 24 * 60 * 60 * 1000) {
+          const refreshRes = await fetchWithAuth("/api/auth/refresh", { method: "POST" });
           if (refreshRes.ok) {
-            const refreshData = await refreshRes.json() as { token: string; username: string };
-            handleLogin(refreshData.token, refreshData.username);
+             const refreshData = await refreshRes.json() as { token: string; username: string };
+             login(refreshData.token, refreshData.username);
           }
         }
       } catch (err) {
@@ -234,13 +212,11 @@ function App() {
     } catch (err) {
       console.error("Failed to check profile", err);
     }
-  }, [token, handleLogout]);
+  }, [token, handleLogout, fetchWithAuth, login]);
 
   const loadConversations = useCallback(async () => {
     try {
-      const res = await fetch("/api/history?limit=50", {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await fetchWithAuth("/api/history?limit=50");
       if (res.ok) {
         const data = await res.json() as { data: Conversation[] };
         setConversations(data.data || []);
@@ -248,7 +224,7 @@ function App() {
     } catch (err) {
       console.error("Failed to load conversations", err);
     }
-  }, [token]);
+  }, [fetchWithAuth]);
 
   useEffect(() => {
     if (token) {
@@ -263,9 +239,7 @@ function App() {
     setIsInChat(true);
     setIsLoadingHistory(true);
     try {
-      const res = await fetch(`/api/history/${id}?limit=100`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await fetchWithAuth(`/api/history/${id}?limit=100`);
       if (res.ok) {
         const data = await res.json() as { chats: ChatMessage[] };
         setMessages(data.chats || []);
@@ -294,9 +268,8 @@ function App() {
 
   const handleDeleteConversation = async (id: string) => {
     try {
-      const res = await fetch(`/api/history/${id}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` }
+      const res = await fetchWithAuth(`/api/history/${id}`, {
+        method: "DELETE"
       });
       if (res.ok) {
         setConversations(prev => prev.filter(c => c.id !== id));
@@ -312,9 +285,7 @@ function App() {
   const handleExport = async (format: "markdown" | "json") => {
     if (!activeConvoId) return;
     try {
-      const res = await fetch(`/api/export/${format}/${activeConvoId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await fetchWithAuth(`/api/export/${format}/${activeConvoId}`);
       if (!res.ok) throw new Error("Export failed");
 
       const blob = await res.blob();
@@ -335,9 +306,7 @@ function App() {
     setShowMetrics(true);
     setIsSidebarOpen(false);
     try {
-      const res = await fetch("/api/metrics", {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await fetchWithAuth("/api/metrics");
       if (res.ok) {
         const data = await res.json() as { metrics: UserMetrics };
         setMetrics(data.metrics);
@@ -411,6 +380,7 @@ function App() {
   const handleSendMessage = async (text: string, summon: string, useStream: boolean, rounds: number) => {
     setIsStreaming(true);
     const msgId = uuidv4();
+    activeMsgIdRef.current = msgId;
 
     const newMsg: ChatMessage = { id: msgId, question: text, opinions: [], verdict: "" };
     setMessages(prev => [...prev, newMsg]);
@@ -427,41 +397,11 @@ function App() {
 
     try {
       if (useStream) {
-        const response = await fetch("/api/ask/stream", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-          body: JSON.stringify(body)
-        });
-
-        if (!response.ok) throw new Error("Stream request failed");
-        const reader = response.body?.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        if (reader) {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || "";
-            for (const line of lines) {
-              const trimmed = line.trim();
-              if (trimmed.startsWith("data: ")) {
-                try {
-                  const eventData = JSON.parse(trimmed.slice(6)) as SSEEvent;
-                  updateMessageFromStream.current(msgId, eventData);
-                } catch {
-                  console.error("Failed to parse SSE line", line);
-                }
-              }
-            }
-          }
-        }
+        await startStream(body);
       } else {
-        const res = await fetch("/api/ask", {
+        const res = await fetchWithAuth("/api/ask", {
           method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body)
         });
 
@@ -495,7 +435,7 @@ function App() {
   };
 
   if (!token) {
-    return <AuthScreen onLogin={handleLogin} />;
+    return <AuthScreen onLogin={login} />;
   }
 
   const activeTitle = conversations.find(c => c.id === activeConvoId)?.title || "New Deliberation";
@@ -626,4 +566,10 @@ function App() {
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
+  );
+}

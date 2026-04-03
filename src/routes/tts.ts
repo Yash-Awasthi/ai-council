@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { env } from "../config/env.js";
 
 const router = Router();
 
@@ -18,7 +19,7 @@ router.post("/", async (req, res, next) => {
       return res.status(400).json({ error: "Invalid payload length" });
     }
 
-    const API_KEY = "sk-sgwx63u9f654ly3nusxlkdqzzzziezx7f6a4xx8ryogcgnds";
+    const API_KEY = env.XIAOMI_MIMO_API_KEY || env.OPENAI_API_KEY;
     
     // Tries to hit SiliconFlow first using standard TTS format.
     // If it fails, falls back to a different model format or provider.

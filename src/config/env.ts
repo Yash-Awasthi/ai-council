@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { z } from "zod";
 
 const envSchema = z.object({
@@ -16,6 +17,12 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   ANTHROPIC_API_KEY: z.string().optional(),
   GOOGLE_API_KEY: z.string().optional(),
+  OPENROUTER_API_KEY: z.string().optional(),
+  NVIDIA_API_KEY: z.string().optional(),
+  XIAOMI_MIMO_API_KEY: z.string().optional(),
+  GROQ_API_KEY: z.string().optional(),
+  MISTRAL_API_KEY: z.string().optional(),
+  CEREBRAS_API_KEY: z.string().optional(),
   CURRENT_ENCRYPTION_VERSION: z.string().regex(/^\d+$/).default("1"),
   ENABLE_VECTOR_CACHE: z.preprocess((v) => v === "true" || v === "1", z.boolean()).default(false),
 });

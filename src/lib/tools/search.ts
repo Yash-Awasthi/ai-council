@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { env } from "../../config/env.js";
 
 export const executeSearchSchema = z.object({
   query: z.string().describe("The search query to execute"),
@@ -28,31 +27,6 @@ export async function executeSearch(args: unknown): Promise<string> {
   }
 
   const query = parsed.data.query;
-
-  // Try Tavily first if key is present
-  if (env.TAVILY_API_KEY && env.TAVILY_API_KEY !== "tavily-api-placeholder") {
-    try {
-      const response = await fetch("https://api.tavily.com/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          api_key: env.TAVILY_API_KEY,
-          query,
-          search_depth: "basic",
-          max_results: 5,
-        }),
-      });
-      if (response.ok) {
-        const data = await response.json();
-        return `Search Results for "${query}" (Tavily):\n\n` + 
-          data.results.map((r: any) => `Source: ${r.url}\nSnippet: ${r.content}`).join("\n\n");
-      }
-    } catch (err) {
-      console.warn("Tavily search failed, falling back to DDG:", err);
-    }
-  }
-
-  // Fallback to Free DuckDuckGo Scraper
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
 
   try {

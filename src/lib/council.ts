@@ -1,5 +1,6 @@
 import { ARCHETYPES, SUMMONS, UNIVERSAL_PROMPT } from "../config/archetypes.js";
 import prisma from "./db.js";
+import { mapProviderError } from "./errorMapper.js";
 import { Message, Provider, askProvider, askProviderStream } from "./providers.js";
 import logger from "./logger.js";
 
@@ -139,7 +140,8 @@ export async function* deliberate(
         return { name: m.name, opinion: response.text };
       } catch (err: any) {
         logger.error({ member: m.name, err: err.message }, "Agent failure in deliberation round");
-        return { name: m.name, opinion: `[FAILED] Unable to provide an opinion: ${err.message}` };
+        const safeErr = mapProviderError(err);
+        return { name: m.name, opinion: `[FAILED] Unable to provide an opinion: ${safeErr}` };
       }
     });
 
@@ -238,22 +240,27 @@ export async function streamCouncil(
     if (m.name && m.archetype) archetypeMap[m.name] = m.archetype;
   }
 
-  for await (const event of deliberate(
-    members, master, messages, rounds, abortSignal, maxTokens,
-    // onVerdictChunk: name matches the frontend "verdict_chunk" case handler
-    (chunk) => { onEvent("verdict_chunk", { chunk }); },
-    // onMemberChunk: name matches the frontend "member_chunk" case handler
-    (name, chunk) => { onEvent("member_chunk", { name, chunk }); }
-  )) {
-    if (event.type === "status") {
-      onEvent("status", { message: event.message });
-    } else if (event.type === "opinion") {
-      const archetype = archetypeMap[event.name] || "";
-      onEvent("opinion", { name: event.name, archetype, opinion: event.text });
-    } else if (event.type === "done") {
-      verdict = event.verdict;
-      onEvent("done", event);
+  try {
+    for await (const event of deliberate(
+      members, master, messages, rounds, abortSignal, maxTokens,
+      // onVerdictChunk: name matches the frontend "verdict_chunk" case handler
+      (chunk) => { onEvent("verdict_chunk", { chunk }); },
+      // onMemberChunk: name matches the frontend "member_chunk" case handler
+      (name, chunk) => { onEvent("member_chunk", { name, chunk }); }
+    )) {
+      if (event.type === "status") {
+        onEvent("status", { message: event.message });
+      } else if (event.type === "opinion") {
+        const archetype = archetypeMap[event.name] || "";
+        onEvent("opinion", { name: event.name, archetype, opinion: event.text });
+      } else if (event.type === "done") {
+        verdict = event.verdict;
+        onEvent("done", event);
+      }
     }
+  } catch (err) {
+    logger.error({ err }, "Stream failed");
+    onEvent("error", { message: mapProviderError(err) });
   }
 
   return verdict;

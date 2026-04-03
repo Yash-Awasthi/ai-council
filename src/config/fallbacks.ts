@@ -5,38 +5,34 @@ import { env } from "./env.js";
 /**
  * Defines specific model overrides for fallbacks.
  */
-export const MODEL_FALLBACK_MAP: Record<string, Partial<Provider>> = {
-  "gpt-4o": {
-    type: "anthropic",
-    model: "claude-3-5-sonnet-20241022",
-    apiKey: env.ANTHROPIC_API_KEY || "",
-    name: "Anthropic Fallback (Sonnet)",
-  },
-};
+export const MODEL_FALLBACK_MAP: Record<string, Partial<Provider>> = {};
 
 /**
  * Defines which model types or specific models should fallback to what.
- * This is a default map that can be expanded.
+ * All fallbacks point to Gemini 2.5 Flash since it is the most reliably
+ * available provider across all configured API keys.
  */
 export const FALLBACK_MAP: Record<string, Partial<Provider>> = {
   "anthropic": {
-    type: "openai-compat",
-    model: "gpt-4o-mini",
-    apiKey: env.OPENAI_API_KEY || "",
-    name: "OpenAI Fallback",
-  },
-  "google": {
-    type: "openai-compat",
-    model: "gpt-4o-mini",
-    apiKey: env.OPENAI_API_KEY || "",
-    name: "OpenAI Fallback",
+    type: "google",
+    model: "gemini-2.5-flash",
+    apiKey: env.GOOGLE_API_KEY || "",
+    name: "Gemini Fallback",
   },
   "openai-compat": {
-    type: "anthropic",
-    model: "claude-3-5-haiku-20241022",
-    apiKey: env.ANTHROPIC_API_KEY || "",
-    name: "Anthropic Fallback",
-  }
+    type: "google",
+    model: "gemini-2.5-flash",
+    apiKey: env.GOOGLE_API_KEY || "",
+    name: "Gemini Fallback",
+  },
+  "google": {
+    // If Google itself fails, try Groq as alternative
+    type: "openai-compat",
+    model: "gpt-4o",
+    apiKey: env.OPENAI_API_KEY || "",
+    baseUrl: "https://api.openai.com/v1",
+    name: "OpenAI Fallback",
+  },
 };
 
 /**
